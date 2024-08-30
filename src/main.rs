@@ -13,20 +13,14 @@ struct Indexer {
 impl Indexer {
     fn new(db: Arc<Mutex<Connection>>) -> Self {
         // Initialize indexer
-        todo!()
+        Indexer { db }
     }
 
-    fn index_file(&self, path: &str) {
-        // Parse file with tree-sitter
-        // Extract symbols, references, etc.
-        // Store in database
-        todo!()
-    }
+    fn index_file(&self, path: &str) {}
 
     fn index_workspace(&self, root: &str) {
         // Walk directory
         // Call index_file for each relevant file
-        todo!()
     }
 }
 
@@ -44,16 +38,28 @@ enum IndexerCommand {
     IndexFile(String),
     IndexWorkspace(String),
 }
+macro_rules! lsp_debug {
+    ($self:expr, $($arg:tt)*) => {
+        $self.send_debug_message(&format!($($arg)*)).await
+    };
+}
 
 struct GenericLspServer {
     client: Client,
     state: Arc<LspState>,
 }
 
+impl GenericLspServer {
+    async fn send_debug_message(&self, message: &str) {
+        self.client.log_message(MessageType::LOG, message).await;
+    }
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for GenericLspServer {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         // Start indexing the workspace
+        lsp_debug!(self, "Server initializing with config: {:?}", params);
         if let Some(root_uri) = params.root_uri {
             self.state
                 .indexer
