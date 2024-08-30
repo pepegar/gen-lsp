@@ -5,39 +5,9 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-struct Indexer {
-    db: Arc<Mutex<Connection>>,
-    // Add fields for tree-sitter parser, etc.
-}
+mod indexer;
+use indexer::*;
 
-impl Indexer {
-    fn new(db: Arc<Mutex<Connection>>) -> Self {
-        // Initialize indexer
-        Indexer { db }
-    }
-
-    fn index_file(&self, path: &str) {}
-
-    fn index_workspace(&self, root: &str) {
-        // Walk directory
-        // Call index_file for each relevant file
-    }
-}
-
-struct LspState {
-    db: Arc<Mutex<Connection>>,
-    indexer: Arc<IndexerHandle>,
-}
-
-struct IndexerHandle {
-    sender: mpsc::Sender<IndexerCommand>,
-}
-impl IndexerHandle {}
-
-enum IndexerCommand {
-    IndexFile(String),
-    IndexWorkspace(String),
-}
 macro_rules! lsp_debug {
     ($self:expr, $($arg:tt)*) => {
         $self.send_debug_message(&format!($($arg)*)).await
