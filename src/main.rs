@@ -1,32 +1,138 @@
-use anyhow::Result;
-use clap::Parser;
-use tower_lsp::{LspService, Server};
-use tokio::io::{stdin, stdout};
+use rusqlite::Connection;
+use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
+use tower_lsp::jsonrpc::Result;
+use tower_lsp::lsp_types::*;
+use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-mod lsp_server;
-use lsp_server::GenericLspServer;
+struct Indexer {
+    db: Arc<Mutex<Connection>>,
+    // Add fields for tree-sitter parser, etc.
+}
 
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    #[arg(short, long)]
-    tcp: bool,
+impl Indexer {
+    fn new(db: Arc<Mutex<Connection>>) -> Self {
+        // Initialize indexer
+        todo!()
+    }
+
+    fn index_file(&self, path: &str) {
+        // Parse file with tree-sitter
+        // Extract symbols, references, etc.
+        // Store in database
+        todo!()
+    }
+
+    fn index_workspace(&self, root: &str) {
+        // Walk directory
+        // Call index_file for each relevant file
+        todo!()
+    }
+}
+
+struct LspState {
+    db: Arc<Mutex<Connection>>,
+    indexer: Arc<IndexerHandle>,
+}
+
+struct IndexerHandle {
+    sender: mpsc::Sender<IndexerCommand>,
+}
+impl IndexerHandle {}
+
+enum IndexerCommand {
+    IndexFile(String),
+    IndexWorkspace(String),
+}
+
+struct GenericLspServer {
+    client: Client,
+    state: Arc<LspState>,
+}
+
+#[tower_lsp::async_trait]
+impl LanguageServer for GenericLspServer {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        // Start indexing the workspace
+        if let Some(root_uri) = params.root_uri {
+            self.state
+                .indexer
+                .sender
+                .send(IndexerCommand::IndexWorkspace(root_uri.to_string()))
+                .await
+                .ok();
+        }
+        // Return capabilities
+        //
+        Ok(InitializeResult {
+            capabilities: ServerCapabilities {
+                text_document_sync: Some(TextDocumentSyncCapability::Kind(
+                    TextDocumentSyncKind::FULL,
+                )),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
+                // Add more capabilities as you implement them
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    }
+
+    async fn initialized(&self, _: InitializedParams) {
+        self.client
+            .log_message(MessageType::INFO, "server initialized!")
+            .await;
+    }
+
+    async fn shutdown(&self) -> Result<()> {
+        Ok(())
+    }
+
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        // Queue re-indexing of the changed file
+        let uri = params.text_document.uri.to_string();
+        self.state
+            .indexer
+            .sender
+            .send(IndexerCommand::IndexFile(uri))
+            .await
+            .ok();
+    }
+
+    // Implement other LSP methods...
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    let args = Args::parse();
+async fn main() {
+    let db = Arc::new(Mutex::new(Connection::open("lsp.db").unwrap()));
 
-    if args.tcp {
-        println!("TCP mode is not implemented yet.");
-        return Ok(());
-    }
+    let (tx, mut rx) = mpsc::channel(100);
+    let indexer = Arc::new(IndexerHandle { sender: tx });
+    let indexer_worker = Arc::new(IndexerHandle {
+        sender: indexer.sender.clone(),
+    });
 
-    let stdin = stdin();
-    let stdout = stdout();
+    let state = Arc::new(LspState {
+        db: db.clone(),
+        indexer,
+    });
 
-    let (service, socket) = LspService::new(|client| GenericLspServer::new(client));
-    Server::new(stdin, stdout, socket).serve(service).await;
+    // Spawn indexer worker
+    tokio::spawn(async move {
+        let indexer = Indexer::new(db.clone());
+        while let Some(cmd) = rx.recv().await {
+            match cmd {
+                IndexerCommand::IndexFile(path) => indexer.index_file(&path),
+                IndexerCommand::IndexWorkspace(root) => indexer.index_workspace(&root),
+            }
+        }
+    });
 
-    Ok(())
+    // Create and run the LSP service
+    let (service, socket) = LspService::new(|client| GenericLspServer {
+        client,
+        state: state.clone(),
+    });
+    Server::new(tokio::io::stdin(), tokio::io::stdout(), socket)
+        .serve(service)
+        .await;
 }
